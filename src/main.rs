@@ -34,7 +34,11 @@ async fn main() {
     let zeekLogDir: &str = "/opt/zeek/etc"; // Directory containing Zeek log files, need to iterate through and get each.
 
     let eveFile = fs::read_to_string(&eveJson).expect("Could not open eve.json file"); 
-    let alertsReader = from_str::<Vec<AlertStruct>>(&eveFile).unwrap();
+    let alertsReader = eveFile
+        .lines()
+        .filter_map(|line| serde_json::from_str::<AlertStruct>(line).ok())
+        .collect::<Vec<AlertStruct>>();
+
 
     for eve in alertsReader { 
         if eve.event_type == "alert" {
