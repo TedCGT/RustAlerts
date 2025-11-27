@@ -6,6 +6,7 @@ use std::io::{Write, BufRead, BufReader};
 use chrono::{Timelike, Datelike, Local};
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::time::Duration;
 use tokio;
 
 #[derive(Deserialize, Debug)]
@@ -33,7 +34,7 @@ async fn main() {
     let zeekBin: &str = "/opt/zeek/bin/zeek";
     let zeekLogDir: &str = "/opt/zeek/etc"; // Directory containing Zeek log files, need to iterate through and get each.
 
-    let eveFile = fs::read_to_string(&eveJson).expect("Could not open eve.json file"); 
+    let eveFile = fs::read_to_string("src/eve.json").expect("Could not open eve.json file"); 
     let alertsReader = eveFile
         .lines()
         .filter_map(|line| serde_json::from_str::<AlertStruct>(line).ok())
@@ -45,12 +46,7 @@ async fn main() {
             //Safe borrow and unwrapping. Using .unwrap() moves ownership to sevCheck.
             if let Some(sevCheck) = &eve.alert {
                 if sevCheck.severity <= 2 {
-                    let now = Local::now();
-                    let mins_now = now.minute() as i32;
-
-                    //formats to match pcap file naming convention.
-                    let timestamp = now.format("%Y%m%d_%H").to_string();
-                    let final_formatted = String::from("hourly_") + "" + &timestamp + "" + &timestamp_adjust(mins_now) + "" + &String::from(".pcap");
+                    let final_formatted = timestamp_adjust();
 
                     //Creates hash from composite strings included in alerts.
                     let fingerprint = format!("P{} : {} : {} : {} : {} : {}",
@@ -61,9 +57,11 @@ async fn main() {
                         &sevCheck.signature,
                         &sevCheck.signature_id
                     );
-                    let hash_written = composite_fingerprint(&fingerprint).unwrap();
-                    if hash_written {
-                        alertdetected::execute_zeek(&final_formatted, &fingerprint).await;
+                    let hash_written = composite_fingerprint(&fingerprint);
+                    if hash_written.contains("true") {
+                        //alertdetected::execute_zeek(&final_formatted, &fingerprint).await;
+                        println!("Test: {}, ", &final_formatted);
+                        println!("{}", &hash_written);
                     }
                 }
             }
@@ -72,46 +70,83 @@ async fn main() {
 }
 
 //Merge Timestamp, Signature ID, Signature, src IP and dest IP to create a unique hash for an alert - store in a file and check against to avoid dupes
-//Wipe daily to avoid file bloat.
-fn composite_fingerprint(fingerprint: &String) -> Result<bool, std::io::Error> {
+fn composite_fingerprint(fingerprint: &String) -> String {
     let mut hasher = DefaultHasher::new();
     fingerprint.hash(&mut hasher);
     let alert_hash = hasher.finish();
+    //Creates hash based on alert composite string.
 
+    //Flag checks against existing hashes in file.
     let mut hash_check_status = false;
-    let hash_file = fs::File::open("hashfile.txt").expect("Could not open alert_hashes.txt file");
+    //If Zeek has already been called for this run, do not call again.
+    let mut latest_run_flag = false;
+
+    let hash_file = fs::File::open("src/hashfile.txt").expect("Could not open alert_hashes.txt file");
     let reader = BufReader::new(hash_file);
     for line in reader.lines() {
         if let Ok(line) = line {
-            if line.trim() == alert_hash.to_string() {
-                hash_check_status = true;
-                break;
-            } 
+            if let Some((stored_hash, flag)) = line.trim().split_once('-') {
+                if stored_hash == alert_hash.to_string() {
+                    println!("Hash: {}-{}", &stored_hash, &flag);
+                    //Check flag. If 0, need to start a process that will fetch the pcap time and run zeek on it. Can call the timestamp_adjust function here as normal with mins.
+                    if flag == "0" && !latest_run_flag {
+                        latest_run_flag = true;
+                    }
+                    hash_check_status = true;
+                    break;
+                }
+            }
         }
     }
-    if !hash_check_status {
-        let mut write_file = fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open("hashfile.txt")
-            .expect("Could not open alert_hashes.txt file");
-        writeln!(write_file, "{}", alert_hash).expect("Could not write to alert_hashes.txt file");
-        Ok(true)
+    let mut write_file = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("src/hashfile.txt")
+        .expect("Could not open alert_hashes.txt file");
+    if !hash_check_status{
+        writeln!(write_file, "{}-0", alert_hash).expect("Could not write to alert_hashes.txt file");
+        String::from("true")
+    } else if latest_run_flag {
+        //Update flag to 1 for all hashes with 0 flag.
+            let contents = fs::read_to_string("src/hashfile.txt").expect("Could not read hashfile.txt");
+            let updated_contents: String = contents
+                .lines()
+                .map(|line| {
+                    if line.ends_with("-0") {
+                        line.replace("-0", "-1")
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<String>>()
+                .join("\n");
+            fs::write("src/hashfile.txt", updated_contents).expect("Could not write updated contents to hashfile.txt");
+            String::from("true-BitAmended") 
     } else {
-        Ok(false)
+        String::from("false")
     }
 }
 
 
-fn timestamp_adjust(num: i32) -> String {
+fn timestamp_adjust() -> String {
     //Rounds minutes down to nearest pcap run interval. Being 30 mins or 00 Mins (On the hour).
-    if num > 30 {
-        let thirty_more = num - (num % 30);
-        thirty_more.to_string()
-    } else if num == 30 {
-        String::from("00")
+    let now = Local::now();
+    // Determine previous rotation point
+    let (prev_hour, prev_min) = if now.minute() >= 30 {
+        (now.hour(), 0)
     } else {
-        String::from("00") // Add else if num = 0 case for later
-    }
+        // Before 30 → previous file ended at :30 of previous hour
+        let hour = if now.hour() == 0 { 23 } else { now.hour() - 1 };
+        (hour, 30)
+    };
+
+    format!(
+        "hourly_{:04}{:02}{:02}_{:02}{:02}.pcap",
+        now.year(),
+        now.month(),
+        now.day(),
+        prev_hour,
+        prev_min
+    )
 }
 
