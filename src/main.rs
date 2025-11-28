@@ -140,13 +140,16 @@ fn timestamp_adjust() -> String {
         (hour, 30)
     };
 
-    format!(
+    let formatted_hourly_pcap = format!(
         "hourly_{:04}{:02}{:02}_{:02}{:02}.pcap",
         now.year(),
         now.month(),
         now.day(),
         prev_hour,
         prev_min
-    )
+    );
+    //Testing
+    alertdetected::action_log(&formatted_hourly_pcap, "Info");
+    formatted_hourly_pcap
 }
 

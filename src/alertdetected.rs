@@ -1,4 +1,5 @@
 use std::process::Command;
+use simplelog::*;
 use dotenv::dotenv;
 use std::env;
 use aws_config::meta::region::RegionProviderChain;
@@ -48,4 +49,19 @@ async fn webhook_alert(hourly_pcap_file: &str, alert: &str) -> Result<(), Box<dy
         println!("Response from Lambda: {}", String::from_utf8_lossy(&bytes.as_ref()));
     }
     Ok(())
+}
+
+//log_type - Error or just Info to be logged.
+pub fn action_log(log_message: &String, log_type: &String) -> Result<(), Error> {
+    CombinedLogger::init(
+        vec![
+            TermLogger::new(LevelFilter::Warn, Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
+            WriteLogger::new(LevelFilter::Info, Config::default(), File::create("src/Alerts.log").unwrap()),
+        ]
+    ).unwrap();
+    if log_type = "Error" {
+        error!("{}", log_message);
+    } else {
+        info!("{}", log_message);
+    }
 }
