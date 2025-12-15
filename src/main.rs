@@ -1,7 +1,10 @@
 mod alertdetected;
-use std::fs;
 use serde_json::from_str;
 use serde::Deserialize;
+use simplelog::*;
+use log::{info, error};
+use std::fs::File;
+use std::fs;
 use std::io::{Write, BufRead, BufReader};
 use chrono::{Timelike, Datelike, Local};
 use std::hash::{Hash, Hasher};
@@ -30,6 +33,12 @@ struct AlertDetails {
 //Do not need to write my own logic for filtering alerts. Can be done from Wazuh side. Just need to forward high severity alerts to Zeek for pcap analysis.
 #[tokio::main]
 async fn main() {
+    CombinedLogger::init(
+        vec![
+            TermLogger::new(LevelFilter::Warn, Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
+            WriteLogger::new(LevelFilter::Info, Config::default(), File::create("src/Alerts.log").unwrap()),
+        ]
+    ).unwrap();
     let eveJson: &str = "/var/log/suricata/eve.json";
     let zeekBin: &str = "/opt/zeek/bin/zeek";
     let zeekLogDir: &str = "/opt/zeek/etc"; // Directory containing Zeek log files, need to iterate through and get each.
@@ -59,9 +68,7 @@ async fn main() {
                     );
                     let hash_written = composite_fingerprint(&fingerprint);
                     if hash_written.contains("true") {
-                        //alertdetected::execute_zeek(&final_formatted, &fingerprint).await;
-                        println!("Test: {}, ", &final_formatted);
-                        println!("{}", &hash_written);
+                        alertdetected::execute_zeek(&final_formatted, &fingerprint).await;
                     }
                 }
             }
@@ -121,8 +128,10 @@ fn composite_fingerprint(fingerprint: &String) -> String {
                 .collect::<Vec<String>>()
                 .join("\n");
             fs::write("src/hashfile.txt", updated_contents).expect("Could not write updated contents to hashfile.txt");
+            alertdetected::action_log(&String::from("Checking Previous Run..."), &String::from("Info"));
             String::from("true-BitAmended") 
     } else {
+        alertdetected::action_log(&String::from("No Match"), &String::from("Info"));
         String::from("false")
     }
 }
@@ -148,8 +157,8 @@ fn timestamp_adjust() -> String {
         prev_hour,
         prev_min
     );
-    //Testing
-    alertdetected::action_log(&formatted_hourly_pcap, "Info");
+    //Logging pcap triggers
+    alertdetected::action_log(&formatted_hourly_pcap, &String::from("Info"));
     formatted_hourly_pcap
 }
 

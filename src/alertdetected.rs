@@ -1,5 +1,7 @@
 use std::process::Command;
 use simplelog::*;
+use log::{info, error};
+use std::fs;
 use dotenv::dotenv;
 use std::env;
 use aws_config::meta::region::RegionProviderChain;
@@ -13,16 +15,16 @@ use tokio;
 pub async fn execute_zeek(hourly_pcap_file: &str, alert: &str) {
     let pcapDir: &str = "/usr/local/bin/hourlypcap";
     let full_pcap_path = format!("{}/{}", pcapDir, hourly_pcap_file);
+    let pcapExecute = format!("Executing Zeek on pcap file... {}", full_pcap_path);
     let status = Command::new("zeek")
         .args(["-r", &full_pcap_path])
         .status();
 
     match status {
-        Ok(exit) if exit.success() => println!("Zeek executed successfully."),
-        Ok(exit) => eprintln!("Zeek exited with status: {}", exit),
-        Err(e) => eprintln!("Failed to execute Zeek: {}", e),
-    }
-    println!("Executing Zeek on pcap file... {}", full_pcap_path);
+        Ok(exit) if exit.success() => action_log(&pcapExecute, &String::from("Info")),
+        Ok(exit) => action_log(&format!("Zeek failed with error {}", exit), &String::from("Error")),
+        Err(e) => action_log(&format!("Zeek failed to executed with error {}", e), &String::from("Error")),
+    };
     webhook_alert(&hourly_pcap_file, &alert).await.unwrap();
 }
 
@@ -48,20 +50,16 @@ async fn webhook_alert(hourly_pcap_file: &str, alert: &str) -> Result<(), Box<dy
     if let Some(bytes) = resp.payload {
         println!("Response from Lambda: {}", String::from_utf8_lossy(&bytes.as_ref()));
     }
+    action_log(&String::from("Sending AWS Lambda Alert..."), &String::from("Info"));
     Ok(())
 }
 
 //log_type - Error or just Info to be logged.
-pub fn action_log(log_message: &String, log_type: &String) -> Result<(), Error> {
-    CombinedLogger::init(
-        vec![
-            TermLogger::new(LevelFilter::Warn, Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
-            WriteLogger::new(LevelFilter::Info, Config::default(), File::create("src/Alerts.log").unwrap()),
-        ]
-    ).unwrap();
-    if log_type = "Error" {
+pub fn action_log(log_message: &String, log_type: &String) -> Result<(), std::io::Error> {
+    if log_type == "Error" {
         error!("{}", log_message);
     } else {
         info!("{}", log_message);
     }
+    Ok(())
 }

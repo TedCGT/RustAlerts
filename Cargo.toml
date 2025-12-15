@@ -14,4 +14,5 @@ dotenv = "0.15.0"
 aws-config = "1.8.10"
 aws-sdk-lambda = "1.104.0"
 simplelog = "0.12.2"
+log = "0.4.28"
 

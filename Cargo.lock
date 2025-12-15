@@ -2148,6 +2148,7 @@ dependencies = [
  "aws-sigv4 0.56.1",
  "chrono",
  "dotenv",
+ "log",
  "reqwest",
  "serde",
  "serde_json",
